@@ -2,14 +2,17 @@ name: Build Tawasul Android APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
+
   workflow_dispatch:
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: android
@@ -19,40 +22,50 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
+          distribution: temurin
           java-version: '17'
-          distribution: 'temurin'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Setup Gradle 8.11.1
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.11.1'
 
-      - name: Configure google-services.json from GitHub Secret (if configured)
+      - name: Configure google-services.json
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n\r ' | base64 -d > app/google-services.json
-            echo "Decoded android/app/google-services.json from GOOGLE_SERVICES_JSON_BASE64."
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
           elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
             printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-            echo "Wrote android/app/google-services.json from GOOGLE_SERVICES_JSON."
+          elif [ -f app/google-services.json ]; then
+            echo "Using existing google-services.json"
           else
-            echo "No google-services.json secret set; building without google-services plugin."
+            echo "Google services configuration is missing."
+            exit 1
           fi
+
+      - name: Grant Gradle permission
+        run: chmod +x gradlew
 
       - name: Run Kotlin Unit Tests
         env:
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
-        run: gradle testDebugUnitTest --no-daemon --stacktrace --info
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tawasul-Android-APK
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
       - name: Upload Unit Test Reports
         if: always()
@@ -61,20 +74,3 @@ jobs:
           name: tawasul-unit-test-reports
           path: android/app/build/reports/tests/testDebugUnitTest/
           if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Build Debug APK
-        env:
-          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
-        run: |
-          gradle assembleDebug --no-daemon --stacktrace
-          test -f app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Upload Debug APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawasul-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 30
